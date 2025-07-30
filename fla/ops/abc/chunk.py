@@ -10,7 +10,7 @@ import triton.language as tl
 from fla.ops.utils import softmax_bwd, softmax_fwd
 from fla.ops.utils.logcumsumexp import logcumsumexp_fwd_kernel
 from fla.ops.utils.op import exp
-from fla.utils import input_guard
+from fla.utils import input_guard, is_tma_supported
 
 
 @triton.jit(do_not_specialize=['T'])
@@ -851,7 +851,8 @@ class ChunkABCFunction(torch.autograd.Function):
             grid = (B * H,)
             logcumsumexp_fwd_kernel[grid](
                 s, z,
-                T=T, S=S
+                T=T, S=S,
+                USE_TMA=(is_tma_supported and M % 16 == 0),
             )
             return z
 
