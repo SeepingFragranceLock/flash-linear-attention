@@ -113,6 +113,7 @@ def profile(
 
     start, total_tokens = time.time(), 0
     bar = trange(steps)
+    duration = 0.0
     torch.cuda.synchronize(device)
     for _ in bar:
         # forward pass
@@ -124,6 +125,8 @@ def profile(
             vocab_size=config.vocab_size,
             device=device
         )
+        torch.cuda.synchronize(device)
+        start = time.time()
         outputs = model(tokens, labels=tokens, cu_seqlens=cu_seqlens)
         # backward pass
         accelerator.backward(outputs.loss)
@@ -132,7 +135,7 @@ def profile(
 
         total_tokens += batch_size * seq_len
         torch.cuda.synchronize(device)
-        duration = time.time() - start
+        duration += time.time() - start
         bar.set_description_str(f"Thoughput: {total_tokens / duration:10.2f} tokens/s")
 
 
@@ -143,7 +146,7 @@ if __name__ == "__main__":
     parser.add_argument("--seq_len", default=2048, type=int)
     parser.add_argument("--context_len", default=None, type=int)
     parser.add_argument("--varlen", action='store_true')
-    parser.add_argument("--warmup_steps", default=64, type=int)
+    parser.add_argument("--warmup_steps", default=2, type=int)
     parser.add_argument("--steps", default=256, type=int)
     parser.add_argument("--compile", action='store_true')
     args = parser.parse_args()

@@ -13,13 +13,14 @@ from fla.utils import check_shared_mem
 
 
 @triton.heuristics({
-    'IS_VARLEN': lambda args: args['cu_seqlens'] is not None
+    'IS_VARLEN': lambda args: args['cu_seqlens'] is not None,
 })
 @triton.autotune(
     configs=[
-        triton.Config({}, num_warps=num_warps, num_stages=num_stages)
+        triton.Config({'USE_TMA_AUTOTUNE': TMA}, num_warps=num_warps, num_stages=num_stages)
         for num_warps in [2, 4]
         for num_stages in [2, 3, 4]
+        for TMA in [False, True]
     ],
     key=['H', 'K', 'V', 'BT', 'BK', 'BV', 'IS_VARLEN']
 )
@@ -46,6 +47,7 @@ def prepare_wy_repr_bwd_kernel(
     BK: tl.constexpr,
     BV: tl.constexpr,
     USE_TMA: tl.constexpr,
+    USE_TMA_AUTOTUNE: tl.constexpr,
     IS_VARLEN: tl.constexpr
 ):
     i_t, i_bh = tl.program_id(0), tl.program_id(1)
@@ -70,7 +72,7 @@ def prepare_wy_repr_bwd_kernel(
     b_dA = tl.zeros([BT, BT], dtype=tl.float32)
     b_dg = tl.zeros([BT], dtype=tl.float32)
 
-    if USE_TMA:
+    if USE_TMA and USE_TMA_AUTOTUNE:
         k_desc = make_tensor_descriptor(k + (bos*H + i_h) * K, shape=(T, K), strides=(H*K, 1), block_shape=(BT, BK))
         v_desc = make_tensor_descriptor(v + (bos*H + i_h) * V, shape=(T, V), strides=(H*V, 1), block_shape=(BT, BV))
         dk_desc = make_tensor_descriptor(dk + (bos*H + i_h) * K, shape=(T, K), strides=(H*K, 1), block_shape=(BT, BK))
@@ -79,7 +81,7 @@ def prepare_wy_repr_bwd_kernel(
         dw_desc = make_tensor_descriptor(dw + (bos*H + i_h) * K, shape=(T, K), strides=(H*K, 1), block_shape=(BT, BK))
 
     for i_k in range(tl.cdiv(K, BK)):
-        if USE_TMA:
+        if USE_TMA and USE_TMA_AUTOTUNE:
             b_k = k_desc.load([i_t * BT, i_k * BK])
             b_dw = dw_desc.load([i_t * BT, i_k * BK])
         else:
@@ -95,13 +97,13 @@ def prepare_wy_repr_bwd_kernel(
         b_dk = b_dk_beta_g * b_beta[:, None] * b_g_exp[:, None]
         b_dbeta += tl.sum(b_dk_beta_g * b_k * b_g_exp[:, None], 1)
         b_dg += tl.sum(b_dk_beta_g * b_k * b_g_exp[:, None] * b_beta[:, None], 1)
-        if USE_TMA:
+        if USE_TMA and USE_TMA_AUTOTUNE:
             dk_desc.store([i_t * BT, i_k * BK], b_dk.to(dk_desc.dtype))
         else:
             tl.store(p_dk, b_dk.to(p_dk.dtype.element_ty), boundary_check=(0, 1))
 
     for i_v in range(tl.cdiv(V, BV)):
-        if USE_TMA:
+        if USE_TMA and USE_TMA_AUTOTUNE:
             b_v = v_desc.load([i_t * BT, i_v * BV])
             b_du = du_desc.load([i_t * BT, i_v * BV])
         else:
@@ -115,7 +117,7 @@ def prepare_wy_repr_bwd_kernel(
         b_dv_beta = tl.dot(b_A, b_du)
         b_dv = b_dv_beta * b_beta[:, None]
         b_dbeta += tl.sum(b_dv_beta * b_v, 1)
-        if USE_TMA:
+        if USE_TMA and USE_TMA_AUTOTUNE:
             dv_desc.store([i_t * BT, i_v * BV], b_dv.to(dv_desc.dtype))
         else:
             p_dv = tl.make_block_ptr(dv + (bos*H + i_h) * V, (T, V), (H*V, 1), (i_t * BT, i_v * BV), (BT, BV), (1, 0))
@@ -134,7 +136,7 @@ def prepare_wy_repr_bwd_kernel(
     for i_k in range(tl.cdiv(K, BK)):
         p_k = tl.make_block_ptr(k + (bos*H + i_h) * K, (T, K), (H*K, 1), (i_t * BT, i_k * BK), (BT, BK), (1, 0))
         b_k = tl.load(p_k, boundary_check=(0, 1))
-        if USE_TMA:
+        if USE_TMA and USE_TMA_AUTOTUNE:
             b_dk = dk_desc.load([i_t * BT, i_k * BK])
         else:
             p_dk = tl.make_block_ptr(dk + (bos*H + i_h) * K, (T, K), (H*K, 1), (i_t * BT, i_k * BK), (BT, BK), (1, 0))
@@ -145,7 +147,7 @@ def prepare_wy_repr_bwd_kernel(
         b_dbeta += tl.sum(b_dk_beta * b_k, 1)
         b_dk += tl.dot(tl.trans(b_dA), b_k_beta)
         b_dk += b_dk_beta * b_beta[:, None]
-        if USE_TMA:
+        if USE_TMA and USE_TMA_AUTOTUNE:
             dk_desc.store([i_t * BT, i_k * BK], b_dk.to(dk_desc.dtype))
         else:
             tl.store(p_dk, b_dk.to(p_dk.dtype.element_ty), boundary_check=(0, 1))
@@ -165,9 +167,10 @@ def prepare_wy_repr_bwd_kernel(
 })
 @triton.autotune(
     configs=[
-        triton.Config({}, num_warps=num_warps, num_stages=num_stages)
+        triton.Config({'USE_TMA_AUTOTUNE': TMA}, num_warps=num_warps, num_stages=num_stages)
         for num_warps in [2, 4, 8]
         for num_stages in [2, 3, 4]
+        for TMA in [False, True]
     ],
     key=['H', 'K', 'V', 'BT', 'BK', 'BV', 'IS_VARLEN'],
 )
@@ -193,6 +196,7 @@ def recompute_w_u_fwd_kernel(
     USE_G: tl.constexpr,
     USE_GK: tl.constexpr,
     USE_TMA: tl.constexpr,
+    USE_TMA_AUTOTUNE: tl.constexpr,
     IS_VARLEN: tl.constexpr
 ):
     i_t, i_bh = tl.program_id(0), tl.program_id(1)
@@ -206,7 +210,7 @@ def recompute_w_u_fwd_kernel(
     p_beta = tl.make_block_ptr(beta + bos*H + i_h, (T,), (H,), (i_t * BT,), (BT,), (0,))
     b_beta = tl.load(p_beta, boundary_check=(0,))
 
-    if USE_TMA:
+    if USE_TMA and USE_TMA_AUTOTUNE:
         A_desc = make_tensor_descriptor(A + (bos*H + i_h) * BT, shape=(T, BT), strides=(H*BT, 1), block_shape=(BT, BT))
         b_A = A_desc.load([i_t * BT, 0])
     else:
@@ -324,7 +328,7 @@ def prepare_wy_repr_bwd(
         BT=BT,
         BK=BK,
         BV=BV,
-        USE_TMA=False,
+        USE_TMA=check_k_v_tma_support(K, V)
     )
     return dk, dv, dbeta, dg
 
