@@ -2,12 +2,13 @@
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 import os
+from functools import lru_cache
 
 import triton
 import triton.language as tl
 import triton.language.extra.libdevice as tldevice
 
-from fla.utils import is_gather_supported
+from fla.utils import is_gather_supported, is_tma_supported
 
 if os.environ.get('FLA_USE_FAST_OPS', '0') == '1':
     exp = tldevice.fast_expf
@@ -60,3 +61,12 @@ else:
         _builder=None,
     ):
         return None
+
+
+@lru_cache()
+def check_k_v_tma_support(k_dim: int, v_dim: int):
+    """
+    Check if TMA is supported for the given k and v dimensions.
+    Returns True if TMA is supported, otherwise False.
+    """
+    return is_tma_supported and k_dim % 16 == 0 and v_dim % 16 == 0

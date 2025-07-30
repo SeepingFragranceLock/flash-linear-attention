@@ -405,7 +405,8 @@ if is_nvidia and not is_tf32_supported:
     os.environ['TRITON_F32_DEFAULT'] = 'ieee'
 
 if is_tma_supported:
-    logger.info('TMA is supported, using TMA by default.')
+    logger.info('TMA is supported on your GPU, FLA will use TMA by default.',
+                'This may lead to triton compilation error, if so, please set FLA_NO_USE_TMA=1 to disable TMA.')
 
     def alloc_fn(size: int, alignment: int, stream: Optional[int]):
         return torch.empty(size, device=torch.device(device_name, device_torch_lib.current_device()), dtype=torch.int8)
