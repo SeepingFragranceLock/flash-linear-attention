@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
+import os
 from typing import Optional, Tuple
 
 import torch
@@ -13,9 +14,10 @@ from fla.ops.utils.cumsum import chunk_local_cumsum
 from fla.ops.utils.op import exp, make_tensor_descriptor
 from fla.utils import check_shared_mem, input_guard, is_tma_supported
 
+FLA_AUTOTUNE_GLA_TMA = os.environ.get('FLA_AUTOTUNE_GLA_TMA', '0') != '1'
 BK_LIST = [32, 64] if check_shared_mem() else [16, 32]
 BV_LIST = [64, 128] if check_shared_mem('ampere') else [16, 32]
-TMA_AUTOTUNE_LIST = [True, False] if is_tma_supported else [False]
+TMA_AUTOTUNE_LIST = [True, False] if is_tma_supported and FLA_AUTOTUNE_GLA_TMA else [False]
 
 
 @triton.heuristics({
